@@ -15,9 +15,10 @@ class md_entry{
 public:
     int tag;
     bool valid;
+    bool dirty;
     uint32_t address;
 
-    md_entry(): tag(0), valid(0), address(0){}
+    md_entry(): tag(0), valid(0), dirty(0), address(0){}
 
 };
 
@@ -58,7 +59,7 @@ public:
         metadata.resize(ways, std::vector<md_entry>(std::pow(2, set_size)));
     }
 
-    bool exist(uint32_t address);
+    bool exist(instruction inst);
     bool free_set_entry(uint32_t address);
     uint32_t evict_entry(uint32_t address);
     void update_lru(uint32_t address);
@@ -97,7 +98,7 @@ public:
 
     void parse_input(int argc, char *argv[]);
     void run_simulator();
-    int read(uint32_t address);
-    int write(uint32_t address);
+    int read(instruction inst);
+    int write(instruction inst);
     void print_instruction(uint32_t address);
 };

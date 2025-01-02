@@ -9,7 +9,7 @@
 #endif
 
 // check if the tag of the address is in the cache
-bool cache::exist(uint32_t address)
+bool cache::exist(instruction inst)
 {
     int way = 0; // for PRINT_DEBUG
     for(std::vector<md_entry> &way_vector : metadata)
@@ -19,6 +19,10 @@ bool cache::exist(uint32_t address)
         if(entry.valid && entry.tag == (address >> (set_size + block_size)))
         {
             DEBUG_PRINT("exist:: address = " << std::hex << address << std::dec << ", way = " << way << ", found\n");
+            if (inst.type == WRITE)
+            {
+                entry.dirty = true;
+            }
             return true;
         }
         way++;
@@ -133,7 +137,7 @@ void cache::remove_from_lru(uint32_t address)
 }
 
 // bring to cache a line that is not in the cache
-uint32_t cache::load_to_cache(uint32_t address)
+uint32_t cache::load_to_cache(instruction address)
 {
     uint32_t swapped_out_address = 0;
     // evict an entry if necessary
@@ -146,6 +150,10 @@ uint32_t cache::load_to_cache(uint32_t address)
         if(!entry.valid)
         {
             entry.valid = true;
+            if (inst.type == WRITE)
+            {
+                entry.dirty = true;
+            }
             entry.tag = (address >> (set_size + block_size));
             entry.address = address;
             update_lru(address);
@@ -160,7 +168,7 @@ uint32_t cache::load_to_cache(uint32_t address)
     return 0;
 }
 
-void cache::remove_from_cache(uint32_t address)
+bool cache::remove_from_cache(uint32_t address)
 {
     for(std::vector<md_entry> &way_vector : metadata)
     {
@@ -171,72 +179,79 @@ void cache::remove_from_cache(uint32_t address)
         {
             remove_from_lru(address);
             entry.valid = false;
-            return;
+            return enrty.dirty;
         }
     }
+
+    return false;
 }
 
-int simulator::read(uint32_t address)
+int simulator::read(instruction inst)
 {
     bool hit;
     DEBUG_PRINT("Checking L1");
-    hit = l1.exist(address);
+    hit = l1.exist(inst);
     l1.total_accesses++;
     if(hit)
     {
         DEBUG_PRINT("L1 hit");
         l1.hit_accesses++;
-        l1.update_lru(address);
+        l1.update_lru(inst.address);
         return l1.access_time;
     }
 
     DEBUG_PRINT("Checking L2");
-    hit = l2.exist(address);
+    hit = l2.exist(inst);
     l2.total_accesses++;
     if(hit)
     {
         DEBUG_PRINT("L2 hit");
         l2.hit_accesses++;
-        l2.update_lru(address);
-        l1.load_to_cache(address);
+        l2.update_lru(inst.address);
+        l1.load_to_cache(inst);
         return l2.access_time + l1.access_time;
     }
     DEBUG_PRINT("L2 miss");
     // L2 miss + L1 miss
-    if(l2.free_set_entry(address)) //free spot in L2
+    if(l2.free_set_entry(inst.address)) //free spot in L2
     {
         DEBUG_PRINT("loading to l2 - free spot in L2");
-        l2.load_to_cache(address);
+        l2.load_to_cache(inst);
     } else { // no free spot in L2
         DEBUG_PRINT("loading to l2 - NO free spot in L2");
-        uint32_t swapped_out_address = l2.load_to_cache(address);
+        uint32_t swapped_out_address = l2.load_to_cache(inst);
         DEBUG_PRINT("remove from l1, address: " << std::hex << swapped_out_address << std::dec);
-        l1.remove_from_cache(swapped_out_address);    
+        bool dirty = l1.remove_from_cache(swapped_out_address);
+        if (dirty)
+        {
+            l2.update_lru(inst.address);
+        }
     }
     DEBUG_PRINT("loading to l1");
-    l1.load_to_cache(address);
+    l1.load_to_cache(inst);
     DEBUG_PRINT("accessed memory");
     return l2.access_time + l1.access_time + mem_access_time;
 }
 
-int simulator::write(uint32_t address)
+int simulator::write(instruction inst)
 {
     if (write_allocate)
     {
-        return read(address);
+        return read(inst);
     } else {
         bool hit;
 
-        hit = l1.exist(address);
+        hit = l1.exist(inst);
         l1.total_accesses++;
         if(hit)
         {
             l1.hit_accesses++;
+            l1.make_dirty(address);
             l1.update_lru(address);
             return l1.access_time;
         }
 
-        hit = l2.exist(address);
+        hit = l2.exist(inst);
         l2.total_accesses++;
         if(hit)
         {
@@ -281,11 +296,11 @@ void simulator::run_simulator()
         {
             DEBUG_PRINT("Read address: " << std::hex << inst.address << std::dec);
             print_instruction(inst.address);
-            total_cycles += this->read(inst.address);
+            total_cycles += this->read(inst);
         } else if (inst.type == WRITE) {
             DEBUG_PRINT("Write address: " << std::hex << inst.address << std::dec);
             print_instruction(inst.address);
-            total_cycles += this->write(inst.address);
+            total_cycles += this->write(inst);
         }
     }
 
